@@ -15,7 +15,8 @@ fi
 mkdir -p "$ROOT/data"
 touch "$LOG"
 
-CRON_LINE="*/15 * * * * cd $ROOT && $BIN collect >> $LOG 2>&1 $MARKER"
+# Offset from :00/:15/:30/:45 so we sample shortly after Lyft's points refresh.
+CRON_LINE="5,20,35,50 * * * * cd $ROOT && $BIN collect >> $LOG 2>&1 $MARKER"
 
 # Remove any previous marker line, then append.
 EXISTING="$(crontab -l 2>/dev/null || true)"
