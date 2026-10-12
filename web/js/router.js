@@ -46,11 +46,15 @@ function netUsd(points, rideMin, { ebike = false, usdPerPoint = USD_PER_POINT_HI
 }
 
 function buildCandidates(stations, { preferEbike, maxRideKm }) {
+  const usable = stations.filter(
+    (s) => s.lat != null && s.lon != null && !String(s.name || "").startsWith("VIRTUAL STATION")
+  );
+
   // Pickup end may be rewarded or neutral; never a dropoff-marked station.
-  const pickups = stations.filter(
+  const pickups = usable.filter(
     (s) => s.dropoff_points === 0 && bikesReady(s, preferEbike)
   );
-  const dropoffs = stations.filter(
+  const dropoffs = usable.filter(
     (s) => s.pickup_points === 0 && docksReady(s)
   );
 
