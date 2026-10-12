@@ -90,7 +90,7 @@ A station offering 3–4 points now is likely to still offer points after the ne
 
 ### Streak multipliers (2x / 3x)
 
-Bike Angels applies a **ride-streak multiplier** on top of map points (documented across Lyft Bike Angels materials, SF Examiner coverage of Bay Wheels, and the [Bike Angels community streak guide](https://community.bikeangels.com/category/faq/kb/points); Bay Wheels marketing pages omit most of this detail).
+Follow Lyft’s published streak rules ([Bike Angels community guide](https://community.bikeangels.com/category/faq/kb/points); Bay Wheels marketing pages omit most of this detail).
 
 | Action | Multiplier effect |
 |---|---|
@@ -98,20 +98,18 @@ Bike Angels applies a **ride-streak multiplier** on top of map points (documente
 | 3 more positive rides while streak active | Unlock **3x** for ~24 hours |
 | 4 more positive rides while at 3x | Restart the 24-hour clock (extend 3x) |
 | **Negative** ride | Break streak / drop multiplier |
-| **Neutral** ride | **Ends the streak** (Bay Wheels planning rule) |
+| **Neutral** ride | **Does not break** an active streak |
 
-Definitions for the router:
+Definitions (Lyft):
 
-- **Positive ride:** earns map points > 0 (pickup→dropoff, pickup→neutral, or neutral→dropoff — subject to wrong-direction rules above).
-- **Negative ride:** wrong-direction — start@dropoff and/or end@pickup (0 points and breaks streak).
-- **Neutral ride:** no points either end (neutral→neutral), or otherwise a non-positive ride that is not already classified as negative.
-
-**Bay Wheels planning assumption:** **neutral rides end streaks.** Prefer only positive legs while protecting 2x/3x. (Some older Lyft/Citi Bike Angels FAQ text says neutrals do *not* break an active streak — treat that as conflicting; use Bay Wheels field behavior for this app and re-verify in the live Lyft Bike app.)
+- **Positive ride:** point-earning rebalancing ride (pickup→dropoff, pickup→neutral, or neutral→dropoff — subject to wrong-direction rules above).
+- **Negative ride:** brings bikes to a station that doesn’t need them, or takes a bike from a station that needs bikes (wrong-direction: start@dropoff and/or end@pickup) — **breaks streak**.
+- **Neutral ride:** neither helps nor hurts balance in a way that earns/penalizes points; per Lyft, **does not break** an active streak (but also does not advance it).
 
 Other streak notes:
 
 - While a streak is active, **map values are already multiplied** (stations show multiples of 2 or 3). Live scrapes from a streaking account label “boosted” points, not base 1× values — critical for model training (record multiplier state or de-boost labels).
-- Losing 3x mid-session is usually worse than skipping a mediocre leg; the optimizer should treat streak preservation as a hard or heavily weighted constraint once 2x/3x is on.
+- Losing 3x to a **negative** ride is usually worse than skipping a mediocre leg; treat avoiding negatives as a hard constraint once 2x/3x is on. Neutrals are streak-safe but don’t help climb 2x→3x or extend the clock.
 - Public predicted mode has no per-user streak state unless the user opts in (“I have 2x / 3x active”); default public routes can show both 1× and streak-adjusted totals.
 
 ## Constraints
@@ -120,7 +118,8 @@ Other streak notes:
 |---|---|
 | No start@dropoff / end@pickup | Wrong direction → 0 points **and** breaks streak |
 | Neutral OK for points | One end may be 0; points = sum of both ends |
-| Avoid neutral rides on streak | Neutral rides end 2x/3x (Bay Wheels rule) |
+| Neutral rides keep streak | Per Lyft: neutrals do not break 2x/3x (but don’t advance it) |
+| Avoid negative rides on streak | Negatives break 2x/3x |
 | Streak ladder (1→2x, +3→3x, +4 extend) | Multiplies all subsequent map points for ~24h |
 | Walk time to first pickup + between legs | Often dominates short sessions |
 | Ride duration (+ classic 45-min free window) | Core time cost; overage if a single ride exceeds 45 |
@@ -141,7 +140,7 @@ Uses authenticated inventory points. Proves the optimizer and UX before the mode
 1. Take latest inventory + GBFS snapshot.
 2. Build candidate edges from stations that are **not Drop Off** at start to stations that are **not Pick Up** at end (within ride-radius R). Require `pickup_points + dropoff_points > 0` so pure neutral→neutral is dropped. Reject start@dropoff and end@pickup entirely.
 3. Edge score = `net_usd / (walk_in + ride + dock_overhead)` where `net_usd` uses the point valuation above (default $0.20/pt), streak multiplier, and e-bike cost if applicable.
-4. From start lat/lon, search sequences of edges under the time budget (beam search or limited DFS). Prefer classic bikes by default. Track streak state along the path: positive rides advance/extend; **neutral or negative rides break** 2x/3x — usually prune or heavily penalize those once a streak is active.
+4. From start lat/lon, search sequences of edges under the time budget (beam search or limited DFS). Prefer classic bikes by default. Track streak state along the path: positive rides advance/extend; **neutrals keep** the multiplier but don’t advance it; **negatives break** 2x/3x — prune negatives once a streak is active.
 5. For legs that finish after the next refresh, apply a simple decay discount to expected points (high current values → still positive but lower), rather than assuming zero.
 6. Return top N itineraries with map geometry, points (base + streak-adjusted), $ value, and step times.
 
@@ -212,7 +211,7 @@ bike-angels route --lat … --lon … --minutes 45 --source predicted
 1. **Keep collecting** production snapshots (labels for the public model). Prefer labeling **base (1×) points** or recording whether the collector account had 2x/3x active when the map was scraped.
 2. **Feasibility script** — from one snapshot, list best single legs from a fixed start (assert start@dropoff / end@pickup score 0; neutrals allowed; print points and $).
 3. **Economics helpers** — configurable membership cost, $0.17/min e-bike, point→USD table, streak multiplier; net_usd per leg.
-4. **Multi-leg search** — beam search + time budget + walk between legs; classic-first; streak state machine (build/protect 2x/3x; neutral/negative break); `RewardSource` abstraction with live production backend.
+4. **Multi-leg search** — beam search + time budget + walk between legs; classic-first; streak state machine (positives advance/extend; neutrals keep; negatives break); `RewardSource` abstraction with live production backend.
 5. **Availability filters + high-value bias + cross-refresh decay heuristic.**
 6. **Private UI / CLI** on live production data (validate routing quality).
 7. **Train points model** on SQLite history; offline eval vs held-out production labels.
@@ -226,7 +225,7 @@ bike-angels route --lat … --lon … --minutes 45 --source predicted
 Given a start point and 45 minutes, the app returns 1–3 routes with:
 
 - total Bike Angel points from **live** inventory (no start@dropoff / end@pickup legs)
-- streak-aware totals (optional starting 1× / 2× / 3×; avoid neutral/negative legs that would break a streak)
+- streak-aware totals (optional starting 1× / 2× / 3×; avoid **negative** legs that break a streak; neutrals allowed per Lyft)
 - estimated USD value at $0.15 and $0.20 per point bands
 - walk vs ride breakdown; $0 classic cost (or e-bike $ if enabled)
 - stations that currently have bikes/docks
