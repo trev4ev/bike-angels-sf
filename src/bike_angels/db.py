@@ -53,8 +53,6 @@ CREATE INDEX IF NOT EXISTS idx_obs_time
     ON station_observations(collected_at_unix);
 CREATE INDEX IF NOT EXISTS idx_obs_points
     ON station_observations(pickup_points, dropoff_points);
-CREATE INDEX IF NOT EXISTS idx_obs_ba_points
-    ON station_observations(ba_points);
 """
 
 
@@ -81,6 +79,12 @@ class Database:
             self.conn.execute(
                 "ALTER TABLE station_observations ADD COLUMN ba_high_value INTEGER"
             )
+        self.conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_obs_ba_points
+                ON station_observations(ba_points)
+            """
+        )
 
     def close(self) -> None:
         self.conn.close()
