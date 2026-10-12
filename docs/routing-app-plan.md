@@ -4,6 +4,25 @@ Create optimal multi-leg routes for Bay Wheels Bike Angels points from a startin
 
 This builds on the existing collector (`bike-angels-sf`), which snapshots station inventory, GBFS status, and Bike Angels rewards into `data/bike_angels.sqlite`.
 
+## Product strategy: private v1 → public tool
+
+**End goal:** a **public** routing tool anyone can use without Lyft Bike login.
+
+Bike Angels reward amounts are **not** in public GBFS — they only come from Lyft’s authenticated inventory/map APIs. A public deployment **cannot** pull that production reward feed (auth, ToS, rate limits, token ownership). So the collector’s job is to gather labeled history so we can **train a model that predicts point amounts from public signals** (station fill, capacity, time-of-day, location, etc.).
+
+| Phase | Who | Reward source | Live inputs |
+|---|---|---|---|
+| **v1 (now)** | Personal / private | **Production** inventory points (authenticated collector) | GBFS + Lyft rewards API |
+| **v2 (public)** | Anyone | **Predicted** pickup/dropoff points (no Lyft auth) | Public GBFS only (+ model) |
+
+Implications:
+
+- Keep the **router interface identical** across phases: it consumes a station feature table with `pickup_points` / `dropoff_points` (real or predicted). Swap the data source, not the optimizer.
+- Collection + modeling are first-class product work, not optional polish — they unblock the public tool.
+- Never ship personal `tokens.json` or raw authenticated reward scraping in the public app.
+- Public UI should label estimates as **predicted** (confidence / uncertainty), not as live Angels map values.
+- Optionally keep a private “live mode” for the operator that still uses production data for validation and model drift checks.
+
 ## Problem model
 
 Each rewarded leg is:
@@ -85,7 +104,9 @@ Later (from SQLite history): point persistence / decay curves, station fill patt
 
 ## Algorithm (phased)
 
-### v1 — Live greedy + beam search (ship first)
+### v1 — Live router on production rewards (private; ship first)
+
+Uses authenticated inventory points. Proves the optimizer and UX before the model exists.
 
 1. Take latest inventory + GBFS snapshot.
 2. Build candidate edges from stations that are **not Drop Off** at start to stations that are **not Pick Up** at end (within ride-radius R). Require `pickup_points + dropoff_points > 0` so pure neutral→neutral is dropped. Reject start@dropoff and end@pickup entirely.
@@ -94,7 +115,7 @@ Later (from SQLite history): point persistence / decay curves, station fill patt
 5. For legs that finish after the next refresh, apply a simple decay discount to expected points (high current values → still positive but lower), rather than assuming zero.
 6. Return top N itineraries with map geometry, points, $ value, and step times.
 
-### v2 — Better cost model
+### v2 — Better cost model + private polish
 
 - Walking: Haversine × ~1.3 path factor, ~4.5 km/h
 - Riding: ~12–15 km/h classic / faster e-bike if preferred
@@ -102,12 +123,27 @@ Later (from SQLite history): point persistence / decay curves, station fill patt
 - Prefer `ba_high_value` when tied
 - Explicit 0-score rejection for start@dropoff / end@pickup
 - Optional dual objective: maximize membership-extension value ($0.15/pt) vs Lyft/ebike credit ($0.20/pt)
+- Same router API; still fed by production rewards in private mode
 
-### v3 — Predictive layer (uses collected data)
+### v3 — Points prediction model (enables public tool)
 
-- Fit persistence: P(still rewarded | current points, minutes-to-refresh) and expected next value (e.g. 4 → ~2–3)
-- Prefer routes whose mid-session legs are historically stable after a tick
-- Optional: learn points/minute surfaces by hour for cold starts
+Train on collected `(GBFS features, time, station) → ba_points / pickup / dropoff` labels. At public serve time, **only** public GBFS (+ clock/geo features) are available.
+
+Target outputs per station:
+
+- `pickup_points` / `dropoff_points` (or signed `ba_points`)
+- optional confidence / probability the station is rewarded at all
+
+Features (public at inference):
+
+- fill/empty ratios, bikes, docks, capacity, classic vs ebike counts
+- local hour, minute bucket (15-min), weekday, holiday
+- station lat/lon, neighborhood / cluster id
+- short history of GBFS only (e.g. last 30–60 min of public status), if the public service caches it
+
+Also fit **cross-refresh persistence** when training labels exist: P(still rewarded | current points, minutes-to-refresh) and expected next value — used in private mode with live points, and as a secondary head or feature for public multi-leg plans.
+
+Evaluation: hold out time ranges; compare predicted map vs production inventory on private validation pulls. Public launch gate = usable precision/recall on “is rewarded” plus calibrated expected points for routing $/min.
 
 Exact ILP / OR-Tools is optional later; for Bay Wheels station counts, beam search on pruned edges is enough.
 
@@ -115,9 +151,11 @@ Exact ILP / OR-Tools is optional later; for Bay Wheels station counts, beam sear
 
 ### Backend
 
-- Reuse collector auth/client for live rewards
+- Abstract a `RewardSource` interface:
+  - `LiveLyftSource` — authenticated collector (private v1 only)
+  - `PredictedSource` — model + public GBFS (public tool)
 - `POST /route` → `{ start, time_budget_min, max_walk_m, prefer_ebike }` → ranked itineraries
-- Precompute / cache station graph every refresh cycle
+- Precompute / cache station graph every refresh cycle (15 min); public cache never stores Lyft auth material
 
 ### Frontend (mobile-first map)
 
@@ -125,7 +163,8 @@ Exact ILP / OR-Tools is optional later; for Bay Wheels station counts, beam sear
 - Sliders: time budget, max walk; toggle classic vs allow e-bike
 - Map: pickup → ride → dropoff legs; list: points, ≈$, walk min, ride min, e-bike cost
 - Optional redemption preference: membership weeks vs Lyft/ebike credit
-- Refresh after each points tick
+- Public mode: clear “predicted points” labeling + last model/GBFS update time
+- Refresh after each points tick (live) or GBFS/model refresh (public)
 
 ### CLI first
 
@@ -134,26 +173,38 @@ A CLI is enough before UI:
 ```bash
 bike-angels route --lat … --lon … --minutes 45
 bike-angels route --lat … --lon … --minutes 45 --allow-ebike --usd-per-point 0.20
+# later:
+bike-angels route --lat … --lon … --minutes 45 --source predicted
 ```
 
 ## Build order
 
-1. **Feasibility script** — from one snapshot, list best single legs from a fixed start (assert start@dropoff / end@pickup score 0; neutrals allowed; print points and $).
-2. **Economics helpers** — configurable membership cost, $0.17/min e-bike, point→USD table; net_usd per leg.
-3. **Multi-leg search** — beam search + time budget + walk between legs; classic-first.
-4. **Availability filters + high-value bias + cross-refresh decay heuristic.**
-5. **Live API wrapper** around collector.
-6. **Simple map UI.**
-7. **Historical persistence model** once ~2 weeks of SQLite exist (replace the heuristic decay).
+1. **Keep collecting** production snapshots (labels for the public model).
+2. **Feasibility script** — from one snapshot, list best single legs from a fixed start (assert start@dropoff / end@pickup score 0; neutrals allowed; print points and $).
+3. **Economics helpers** — configurable membership cost, $0.17/min e-bike, point→USD table; net_usd per leg.
+4. **Multi-leg search** — beam search + time budget + walk between legs; classic-first; `RewardSource` abstraction with live production backend.
+5. **Availability filters + high-value bias + cross-refresh decay heuristic.**
+6. **Private UI / CLI** on live production data (validate routing quality).
+7. **Train points model** on SQLite history; offline eval vs held-out production labels.
+8. **Public deployment** — GBFS + `PredictedSource` only; no Lyft tokens; predicted labeling in UI.
+9. **Ongoing private validation** — occasional authenticated pulls to measure drift and retrain.
 
-## Definition of done (v1)
+## Definition of done
+
+### v1 (private, production data)
 
 Given a start point and 45 minutes, the app returns 1–3 routes with:
 
-- total Bike Angel points (no start@dropoff / end@pickup legs)
+- total Bike Angel points from **live** inventory (no start@dropoff / end@pickup legs)
 - estimated USD value at $0.15 and $0.20 per point bands
 - walk vs ride breakdown; $0 classic cost (or e-bike $ if enabled)
 - stations that currently have bikes/docks
 - expected points for post-refresh legs discounted, not zeroed, when current value is high (3–4)
 
-Routes are recomputed from the latest snapshot, not stale history alone.
+### Public tool
+
+Same UX and optimizer, but:
+
+- rewards come from the **prediction model** + public GBFS only
+- no user or server Lyft Bike login for routing
+- UI marks points as predicted; quality gated by offline eval against collected production labels
