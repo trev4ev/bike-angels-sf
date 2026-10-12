@@ -32,12 +32,14 @@ def collect_once(
         rewarded = sum(
             1
             for r in rows
-            if (r["pickup_points"] or 0) > 0 or (r["dropoff_points"] or 0) > 0
+            if (r["pickup_points"] or 0) > 0
+            or (r["dropoff_points"] or 0) > 0
+            or (r.get("ba_points") not in (None, 0))
         )
         snapshot_id = db.insert_snapshot(
             collected_at=now.isoformat(),
             collected_at_unix=now.timestamp(),
-            source="map-items+gbfs",
+            source="inventory+gbfs",
             station_count=len(rows),
             rewarded_count=rewarded,
             rows=rows,
@@ -82,12 +84,18 @@ def _build_rows(
             if r and r.docks_available is not None
             else (s.num_docks_available if s else None)
         )
-        ebikes = s.num_ebikes_available if s else None
+        ebikes = (
+            r.ebikes_available
+            if r and r.ebikes_available is not None
+            else (s.num_ebikes_available if s else None)
+        )
         classic = None
         if bikes is not None and ebikes is not None:
             classic = max(bikes - ebikes, 0)
 
         capacity = m.capacity if m else None
+        if capacity is None and bikes is not None and docks is not None:
+            capacity = bikes + docks
         fill_ratio = None
         empty_ratio = None
         if capacity and capacity > 0 and bikes is not None:
@@ -118,6 +126,10 @@ def _build_rows(
                 "is_returning": int(s.is_returning) if s else None,
                 "pickup_points": r.pickup_points if r else None,
                 "dropoff_points": r.dropoff_points if r else None,
+                "ba_points": r.ba_points if r else None,
+                "ba_high_value": int(r.ba_high_value)
+                if r and r.ba_high_value is not None
+                else None,
                 "fill_ratio": fill_ratio,
                 "empty_ratio": empty_ratio,
             }

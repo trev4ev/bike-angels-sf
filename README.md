@@ -10,7 +10,7 @@ Every snapshot writes one row per station to SQLite:
 - station id/name/lat/lon/capacity (from GBFS)
 - bikes / ebikes / open docks / disabled counts
 - fill/empty ratios
-- Bike Angels `pickup_points` / `dropoff_points` (from Lyft `map-items`)
+- Bike Angels `ba_points` (signed: negative=pickup, positive=dropoff), plus derived `pickup_points` / `dropoff_points` and `ba_high_value` (from Lyft inventory)
 
 DB path: `data/bike_angels.sqlite`
 

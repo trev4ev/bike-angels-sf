@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS station_observations (
     is_returning INTEGER,
     pickup_points INTEGER,
     dropoff_points INTEGER,
+    ba_points INTEGER,
+    ba_high_value INTEGER,
     fill_ratio REAL,
     empty_ratio REAL
 );
@@ -51,6 +53,8 @@ CREATE INDEX IF NOT EXISTS idx_obs_time
     ON station_observations(collected_at_unix);
 CREATE INDEX IF NOT EXISTS idx_obs_points
     ON station_observations(pickup_points, dropoff_points);
+CREATE INDEX IF NOT EXISTS idx_obs_ba_points
+    ON station_observations(ba_points);
 """
 
 
@@ -61,7 +65,22 @@ class Database:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        cols = {
+            row[1]
+            for row in self.conn.execute("PRAGMA table_info(station_observations)")
+        }
+        if "ba_points" not in cols:
+            self.conn.execute(
+                "ALTER TABLE station_observations ADD COLUMN ba_points INTEGER"
+            )
+        if "ba_high_value" not in cols:
+            self.conn.execute(
+                "ALTER TABLE station_observations ADD COLUMN ba_high_value INTEGER"
+            )
 
     def close(self) -> None:
         self.conn.close()
@@ -108,7 +127,8 @@ class Database:
                 bikes_available, ebikes_available, classic_bikes_available,
                 docks_available, bikes_disabled, docks_disabled,
                 is_installed, is_renting, is_returning,
-                pickup_points, dropoff_points, fill_ratio, empty_ratio
+                pickup_points, dropoff_points, ba_points, ba_high_value,
+                fill_ratio, empty_ratio
             ) VALUES (
                 :snapshot_id, :collected_at, :collected_at_unix,
                 :local_hour, :local_minute, :weekday,
@@ -116,7 +136,8 @@ class Database:
                 :bikes_available, :ebikes_available, :classic_bikes_available,
                 :docks_available, :bikes_disabled, :docks_disabled,
                 :is_installed, :is_renting, :is_returning,
-                :pickup_points, :dropoff_points, :fill_ratio, :empty_ratio
+                :pickup_points, :dropoff_points, :ba_points, :ba_high_value,
+                :fill_ratio, :empty_ratio
             )
             """,
             [{**row, "snapshot_id": snapshot_id} for row in rows],

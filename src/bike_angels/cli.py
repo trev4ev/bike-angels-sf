@@ -158,50 +158,27 @@ def cmd_probe(lat: float, lon: float) -> int:
     from .client import LyftMapClient
 
     with AuthClient() as auth, LyftMapClient(auth) as client:
-        payload = client.map_items(lat, lon)
-        items = payload.get("map_items") or []
-        rewarded = []
-        for item in items:
-            pin = (
-                (item.get("collapsible_collection_bubble") or {})
-                .get("selected_detailed_text_specific_pin")
-                or {}
-            )
-            badge = pin.get("reward_badge")
-            if badge:
-                rewarded.append(
-                    {
-                        "device_id": (item.get("device") or {}).get("id"),
-                        "location": item.get("location"),
-                        "reward_badge": badge,
-                        "availability": pin.get("text_specific_items"),
-                    }
-                )
+        rewards = client.fetch_inventory_rewards(lat, lon)
+        nonzero = [r for r in rewards.values() if (r.ba_points or 0) != 0]
         console.print(
-            f"map_items={len(items)} rewarded={len(rewarded)} "
+            f"inventory stations={len(rewards)} rewarded={len(nonzero)} "
             f"at ({lat}, {lon})"
         )
-        console.print(json.dumps(rewarded[:5], indent=2))
-        # Also dump inventory keys for inspection.
-        try:
-            inv = client.inventory(lat, lon)
-            console.print(f"inventory top-level keys: {list(inv.keys())}")
-            raw = inv.get("map_inventory_json")
-            if isinstance(raw, str):
-                import json as _json
-
-                data = _json.loads(raw)
-                feats = data.get("features") or []
-                console.print(f"inventory features={len(feats)}")
-                if feats:
-                    console.print(
-                        "sample props keys:",
-                        sorted((feats[0].get("properties") or {}).keys()),
-                    )
-                    sample = json.dumps(feats[0].get("properties") or {}, indent=2)
-                    console.print(sample[:2000])
-        except Exception as exc:
-            console.print(f"inventory probe failed: {exc}")
+        sample = [
+            {
+                "station_id": r.station_id,
+                "ba_points": r.ba_points,
+                "pickup_points": r.pickup_points,
+                "dropoff_points": r.dropoff_points,
+                "ba_high_value": r.ba_high_value,
+                "bikes": r.bikes_available,
+                "docks": r.docks_available,
+            }
+            for r in sorted(
+                nonzero, key=lambda x: abs(x.ba_points or 0), reverse=True
+            )[:10]
+        ]
+        console.print(json.dumps(sample, indent=2))
     return 0
 
 
