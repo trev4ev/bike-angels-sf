@@ -55,7 +55,7 @@ bike-angels probe
 bash scripts/install-cron.sh
 ```
 
-Cron runs `bike-angels collect` every **15 minutes** at `:05/:20/:35/:50` (just after Lyft's points refresh). Tokens live in `tokens.json` (gitignored); data accumulates in `data/bike_angels.sqlite`.
+Cron runs `bike-angels collect` every **15 minutes** at `:02/:17/:32/:47` (2 minutes after Lyft's points refresh). Tokens live in `tokens.json` (gitignored); data accumulates in `data/bike_angels.sqlite`.
 
 ### 3. Check it’s working
 
