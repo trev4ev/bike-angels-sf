@@ -15,12 +15,54 @@ Each rewarded leg is:
 
 Inputs already collected fit this well: station lat/lon, bikes/docks available, `pickup_points` / `dropoff_points` / `ba_points`, plus 15-minute history once collection has run.
 
-**Optimize for:** points per minute (or max points given a time budget), not raw distance.
+**Optimize for:** net dollar value per minute (or max $ given a time budget), not raw distance — convert points via the rewards catalog, then subtract ride costs (usually $0 on classic bikes).
+
+### Membership & ride costs (assumptions; keep configurable)
+
+Published Lyft Bike / Bay Wheels pricing ([memberships](https://help.lyftbikes.com/hc/en-us/articles/47286633352589-Annual-memberships), [ebike](https://help.lyftbikes.com/hc/en-us/articles/46896915466893-Ebike-pricing), [Bike Angels rewards](https://lyftbikes.com/bike-angels/rewards)):
+
+| Item | Value | Notes |
+|---|---|---|
+| Annual membership | ~$160–165 / yr | Published **$165/yr**; treat as a config constant |
+| Classic bike (member) | **$0** for rides ≤ 45 min | Unlimited classic rides; overage ~$0.17/min after 45 |
+| E-bike (member) | **$0.17 / min** | No unlock fee; rounded up per minute |
+| Bike Angels eligibility | Members only | Annual (or monthly) membership required |
+
+Default Angel-farming mode: **prefer classic bikes** (free marginal cost). Use e-bikes only when the user opts in or when the expected point value clearly exceeds e-bike spend (hills, long legs, time budget).
+
+### Point → dollar valuation
+
+Rewards live in the app store and as monthly milestones ([overview](https://lyftbikes.com/bike-angels/rewards)). Approximate marginal USD per point:
+
+| Reward path | Cost in points | Cash-equivalent | ≈ $/point |
+|---|---|---|---|
+| E-bike credit | 10 | $2.00 (~10 min at $0.17/min) | **$0.20** |
+| Lyft credit (store) | 10–150 | $2–$30 | **~$0.20** |
+| Membership extension | 20 → 1 week (≤4 / month; 4th ≈ 30 days) | annual ÷ 52 ≈ $3.08–$3.17 | **~$0.15–0.16** |
+| Monthly Gold (auto) | every 10 pts from 80–200 | $0.15 / point | **$0.15** |
+| Monthly Platinum (auto) | every 10 pts above 200 | $0.20 / point | **$0.20** |
+
+**Default planning rate:** use **$0.20 / point** (ebike / Lyft credit) as the optimistic redemption value; optionally show a band using **$0.15 / point** (membership-extension / Gold tier). Lifetime swag (pins, bottle, gloves, backpack) is non-cash — track separately, do not put in the route objective.
+
+Net value of a leg:
+
+```text
+expected_usd = expected_points * usd_per_point
+  - (bike_type == ebike ? ceil(ride_minutes) * 0.17 : 0)
+  - classic_overage_if_any
+```
+
+Surface both **points** and **$** in the UI so the user can prefer membership weeks vs Lyft/ebike credit.
 
 ### Scoring rules (domain)
 
-**Both ends must match direction, or the whole ride pays 0.**  
-Pickup points only count when you unlock at a pickup-rewarded station; dropoff points only count when you dock at a dropoff-rewarded station. Starting a trip at a dropoff station (or docking at a pickup station) yields **0 points for that ride**, even if the other end would have paid. The optimizer must never treat “pickup anywhere → dropoff with points” (or the reverse) as a valid scored edge.
+Official rules ([points overview](https://lyftbikes.com/bike-angels/points)) match field experience:
+
+**Wrong direction zeros the whole ride.**  
+Any ride that **starts at a Drop Off station** or **ends at a Pick Up station** earns **0 points**, regardless of the other end. E-bike rides that do not end at a station also earn 0.
+
+**Neutral stations are allowed.**  
+Otherwise you earn **pickup points at start + dropoff points at end**. One end may be neutral (0): e.g. pickup→neutral or neutral→dropoff still pays the non-zero side. Do **not** require both ends to be rewarded — only forbid start@dropoff and end@pickup.
 
 **High-value stations tend to persist across the next refresh.**  
 A station offering 3–4 points now is likely to still offer points after the next `:00` / `:15` / `:30` / `:45` tick, usually at a lower value. Multi-leg plans that cross a refresh should not assume mid-route stations go to zero; prefer decaying expected points (e.g. discount next-window legs) over discarding them. Validate/refine this persistence curve from collected snapshots.
@@ -29,9 +71,11 @@ A station offering 3–4 points now is likely to still offer points after the ne
 
 | Constraint | Why it matters |
 |---|---|
-| Both-end direction match | Wrong-way pickup or dropoff → 0 for the whole ride |
+| No start@dropoff / end@pickup | Wrong direction → 0 for the whole ride |
+| Neutral OK | One end may be 0; points = sum of both ends |
 | Walk time to first pickup + between legs | Often dominates short sessions |
-| Ride duration (distance ÷ bike speed + unlock/dock overhead) | Core cost |
+| Ride duration (+ classic 45-min free window) | Core time cost; overage if a single ride exceeds 45 |
+| E-bike $0.17/min | Subtract from net $ when not on classic |
 | Bike/dock availability | Illegal edges if 0 bikes or 0 docks |
 | Optional max walk distance | Avoid absurd long walks to pickups |
 | Session time budget (e.g. 30–90 min) | Primary user knob |
@@ -44,11 +88,11 @@ Later (from SQLite history): point persistence / decay curves, station fill patt
 ### v1 — Live greedy + beam search (ship first)
 
 1. Take latest inventory + GBFS snapshot.
-2. Build candidate edges **only** from stations with `pickup_points > 0` to stations with `dropoff_points > 0` (within ride-radius R). Exclude any reverse or zero-side pair — those score 0.
-3. Edge score = `(pickup_points + dropoff_points) / (walk_in + ride + dock_overhead)`.
-4. From start lat/lon, search sequences of edges under the time budget (beam search or limited DFS).
+2. Build candidate edges from stations that are **not Drop Off** at start to stations that are **not Pick Up** at end (within ride-radius R). Require `pickup_points + dropoff_points > 0` so pure neutral→neutral is dropped. Reject start@dropoff and end@pickup entirely.
+3. Edge score = `net_usd / (walk_in + ride + dock_overhead)` where `net_usd` uses the point valuation above (default $0.20/pt) minus e-bike cost if applicable.
+4. From start lat/lon, search sequences of edges under the time budget (beam search or limited DFS). Prefer classic bikes by default.
 5. For legs that finish after the next refresh, apply a simple decay discount to expected points (high current values → still positive but lower), rather than assuming zero.
-6. Return top N itineraries with map geometry and step times.
+6. Return top N itineraries with map geometry, points, $ value, and step times.
 
 ### v2 — Better cost model
 
@@ -56,7 +100,8 @@ Later (from SQLite history): point persistence / decay curves, station fill patt
 - Riding: ~12–15 km/h classic / faster e-bike if preferred
 - Soft-penalize low bike/dock counts (race-condition risk)
 - Prefer `ba_high_value` when tied
-- Explicit 0-score rejection for wrong-direction station pairs (defense in depth)
+- Explicit 0-score rejection for start@dropoff / end@pickup
+- Optional dual objective: maximize membership-extension value ($0.15/pt) vs Lyft/ebike credit ($0.20/pt)
 
 ### v3 — Predictive layer (uses collected data)
 
@@ -77,8 +122,9 @@ Exact ILP / OR-Tools is optional later; for Bay Wheels station counts, beam sear
 ### Frontend (mobile-first map)
 
 - Start = GPS or pin
-- Sliders: time budget, max walk
-- Map: pickup → ride → dropoff legs; list: points, walk min, ride min, total
+- Sliders: time budget, max walk; toggle classic vs allow e-bike
+- Map: pickup → ride → dropoff legs; list: points, ≈$, walk min, ride min, e-bike cost
+- Optional redemption preference: membership weeks vs Lyft/ebike credit
 - Refresh after each points tick
 
 ### CLI first
@@ -87,23 +133,26 @@ A CLI is enough before UI:
 
 ```bash
 bike-angels route --lat … --lon … --minutes 45
+bike-angels route --lat … --lon … --minutes 45 --allow-ebike --usd-per-point 0.20
 ```
 
 ## Build order
 
-1. **Feasibility script** — from one snapshot, list best single legs from a fixed start (validates both-end scoring; assert wrong-direction pairs score 0).
-2. **Multi-leg search** — beam search + time budget + walk between legs.
-3. **Availability filters + high-value bias + cross-refresh decay heuristic.**
-4. **Live API wrapper** around collector.
-5. **Simple map UI.**
-6. **Historical persistence model** once ~2 weeks of SQLite exist (replace the heuristic decay).
+1. **Feasibility script** — from one snapshot, list best single legs from a fixed start (assert start@dropoff / end@pickup score 0; neutrals allowed; print points and $).
+2. **Economics helpers** — configurable membership cost, $0.17/min e-bike, point→USD table; net_usd per leg.
+3. **Multi-leg search** — beam search + time budget + walk between legs; classic-first.
+4. **Availability filters + high-value bias + cross-refresh decay heuristic.**
+5. **Live API wrapper** around collector.
+6. **Simple map UI.**
+7. **Historical persistence model** once ~2 weeks of SQLite exist (replace the heuristic decay).
 
 ## Definition of done (v1)
 
 Given a start point and 45 minutes, the app returns 1–3 routes with:
 
-- total Bike Angel points (only legs with pickup *and* dropoff rewards)
-- walk vs ride breakdown
+- total Bike Angel points (no start@dropoff / end@pickup legs)
+- estimated USD value at $0.15 and $0.20 per point bands
+- walk vs ride breakdown; $0 classic cost (or e-bike $ if enabled)
 - stations that currently have bikes/docks
 - expected points for post-refresh legs discounted, not zeroed, when current value is high (3–4)
 
