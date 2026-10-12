@@ -1,6 +1,24 @@
 # bike-angels-sf
 
-Collect Bay Wheels (Lyft Bike) Bike Angels station points over time so you can reverse-engineer the scoring algorithm.
+Collect Bay Wheels (Lyft Bike) Bike Angels station points over time so you can reverse-engineer the scoring algorithm — and route multi-leg Angel trips from an address.
+
+## Public routing app (GitHub Pages)
+
+Static map UI under [`web/`](web/): enter an address (or GPS), pick a time budget, and get ranked routes with **stations, walk/ride time, and predicted points**.
+
+- **Live site:** `https://trev4ev.github.io/bike-angels-sf/` (enable Pages → GitHub Actions after merge)
+- **Reward source:** public GBFS fill heuristic (`PredictedSource`), not authenticated Lyft map values — labeled as predicted in the UI
+- **Data refresh:** [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml) rebuilds `web/data/stations.json` every 15 minutes and redeploys Pages
+
+Local preview:
+
+```bash
+python3 scripts/refresh-web-data.py
+cd web && python3 -m http.server 8080
+# open http://localhost:8080
+```
+
+Plan: [`docs/routing-app-plan.md`](docs/routing-app-plan.md).
 
 ## What it stores
 
