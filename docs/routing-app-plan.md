@@ -220,12 +220,12 @@ bike-angels route --lat … --lon … --minutes 45 --source predicted
 
 ### Shipped (public v0 UI)
 
-Static GitHub Pages app in `web/`:
+Static GitHub Pages app in `docs/` (branch deploy from `main` / `/docs`):
 
 - Address / GPS start, time budget, optional e-bike
 - Beam-search multi-leg router in the browser
 - Map + station list with walk/ride minutes and predicted points / $ bands
-- Live public GBFS fetch in the browser (CORS `*`); no baked snapshot / cron redeploy
+- Live public GBFS fetch in the browser (CORS `*`); no baked snapshot / Actions redeploy
 - `PredictedSource` = GBFS fill-ratio heuristic until the trained model exists
 
 ## Definition of done
