@@ -1,6 +1,6 @@
 import { createMap, setStartMarker, drawRoute, clearRoute, showRewardStations } from "./map.js";
 import { findRoutes } from "./router.js";
-import { enrichStation } from "./rewards.js";
+import { loadLiveStations } from "./gbfs.js";
 import { formatMinutes } from "./geo.js";
 
 const form = document.getElementById("route-form");
@@ -17,6 +17,7 @@ let stations = [];
 let start = null;
 let routes = [];
 let selectedIndex = 0;
+let loadingStations = null;
 
 minutesInput.addEventListener("input", () => {
   minutesLabel.textContent = `${minutesInput.value} min`;
@@ -46,23 +47,34 @@ form.addEventListener("submit", async (e) => {
   await runSearch();
 });
 
-async function init() {
-  setStatus("Loading Bay Wheels stations…");
-  try {
-    const res = await fetch("./data/stations.json", { cache: "no-cache" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const payload = await res.json();
-    stations = (payload.stations || []).map(enrichStation);
+async function refreshStations({ quiet = false } = {}) {
+  if (loadingStations) return loadingStations;
+  if (!quiet) setStatus("Loading live Bay Wheels stations…");
+  loadingStations = (async () => {
+    const payload = await loadLiveStations();
+    stations = payload.stations;
     showRewardStations(mapCtx, stations);
-    const when = payload.local_time || payload.generated_at || "unknown";
-    metaEl.textContent = `Predicted points · ${payload.rewarded_count ?? "?"} rewarded stations · updated ${formatStamp(when)}`;
+    metaEl.textContent = `Live GBFS · predicted points · ${payload.rewardedCount} rewarded / ${payload.stationCount} stations · ${formatStamp(payload.fetchedAt)}`;
+    return payload;
+  })();
+  try {
+    return await loadingStations;
+  } finally {
+    loadingStations = null;
+  }
+}
+
+async function init() {
+  try {
+    await refreshStations();
     setStatus("Enter a San Francisco Bay Area address to plan a route.");
   } catch (err) {
     console.error(err);
     setStatus(
-      "Could not load station data. Run scripts/refresh-web-data.py or wait for the GitHub Action refresh.",
+      "Could not load live GBFS data. Check the network connection and try again.",
       "error"
     );
+    metaEl.textContent = "Live GBFS unavailable";
   }
 }
 
@@ -73,9 +85,17 @@ async function runSearch() {
     return;
   }
 
-  setStatus("Geocoding address…");
+  setStatus("Refreshing stations + geocoding…");
   resultsEl.innerHTML = "";
   clearRoute(mapCtx);
+
+  try {
+    await refreshStations({ quiet: true });
+  } catch (err) {
+    console.error(err);
+    setStatus("Could not refresh live station data.", "error");
+    return;
+  }
 
   try {
     start = await geocode(query);
@@ -112,7 +132,7 @@ async function runSearch() {
   renderResults();
   drawRoute(mapCtx, start, routes[0]);
   setStatus(
-    `Found ${routes.length} route${routes.length === 1 ? "" : "s"} · points are predicted from station fill, not live Angels map values.`
+    `Found ${routes.length} route${routes.length === 1 ? "" : "s"} · points are predicted from live station fill, not Angels map values.`
   );
 }
 
@@ -194,11 +214,8 @@ async function geocode(query) {
   url.searchParams.set("viewbox", "-122.55,37.90,-121.75,37.25");
   url.searchParams.set("bounded", "1");
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      Accept: "application/json",
-    },
-  });
+  // No custom headers — keep the request simple for CORS.
+  const res = await fetch(url.toString());
   if (!res.ok) throw new Error("Geocoding failed.");
   const data = await res.json();
   if (!data.length) {
@@ -225,6 +242,7 @@ function formatStamp(iso) {
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      second: "2-digit",
     });
   } catch {
     return iso;

@@ -7,13 +7,13 @@ Collect Bay Wheels (Lyft Bike) Bike Angels station points over time so you can r
 Static map UI under [`web/`](web/): enter an address (or GPS), pick a time budget, and get ranked routes with **stations, walk/ride time, and predicted points**.
 
 - **Live site:** `https://trev4ev.github.io/bike-angels-sf/` (enable Pages → GitHub Actions after merge)
-- **Reward source:** public GBFS fill heuristic (`PredictedSource`), not authenticated Lyft map values — labeled as predicted in the UI
-- **Data refresh:** [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml) rebuilds `web/data/stations.json` every 15 minutes and redeploys Pages
+- **Station data:** browser fetches public Bay Wheels GBFS live (`station_information` + `station_status`)
+- **Reward source:** fill-ratio heuristic (`PredictedSource`) on that live inventory — labeled as predicted, not authenticated Angels map values
+- **Deploy:** [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml) publishes `web/` on push to `main` (no scheduled data bake)
 
 Local preview:
 
 ```bash
-python3 scripts/refresh-web-data.py
 cd web && python3 -m http.server 8080
 # open http://localhost:8080
 ```

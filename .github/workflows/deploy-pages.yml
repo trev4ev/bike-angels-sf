@@ -5,11 +5,7 @@ on:
     branches: [main]
     paths:
       - "web/**"
-      - "scripts/refresh-web-data.py"
       - ".github/workflows/deploy-pages.yml"
-  schedule:
-    # Refresh GBFS + redeploy near Bike Angels ticks (:00/:15/:30/:45).
-    - cron: "2,17,32,47 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -26,9 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Refresh public station snapshot
-        run: python3 scripts/refresh-web-data.py --out web/data/stations.json
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

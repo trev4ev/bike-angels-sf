@@ -225,8 +225,8 @@ Static GitHub Pages app in `web/`:
 - Address / GPS start, time budget, optional e-bike
 - Beam-search multi-leg router in the browser
 - Map + station list with walk/ride minutes and predicted points / $ bands
+- Live public GBFS fetch in the browser (CORS `*`); no baked snapshot / cron redeploy
 - `PredictedSource` = GBFS fill-ratio heuristic until the trained model exists
-- Workflow refreshes `web/data/stations.json` on the 15-minute cadence and deploys Pages
 
 ## Definition of done
 

@@ -29,13 +29,8 @@ export function enrichStation(raw) {
       ? bikes / capacity
       : raw.fill_ratio ?? null;
 
-  const predicted =
-    raw.pickup_points != null && raw.dropoff_points != null
-      ? {
-          pickup_points: Number(raw.pickup_points) || 0,
-          dropoff_points: Number(raw.dropoff_points) || 0,
-        }
-      : predictPointsFromFill(fill);
+  // Always derive predicted points from live fill (public tool path).
+  const predicted = predictPointsFromFill(fill);
 
   return {
     ...raw,
