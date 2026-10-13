@@ -218,6 +218,16 @@ bike-angels route --lat … --lon … --minutes 45 --source predicted
 8. **Public deployment** — GBFS + `PredictedSource` only; no Lyft tokens; predicted labeling in UI.
 9. **Ongoing private validation** — occasional authenticated pulls to measure drift and retrain.
 
+### Shipped (public v0 UI)
+
+Static GitHub Pages app in `web/`:
+
+- Address / GPS start, time budget, optional e-bike
+- Beam-search multi-leg router in the browser
+- Map + station list with walk/ride minutes and predicted points / $ bands
+- Live public GBFS fetch in the browser (CORS `*`); no baked snapshot / cron redeploy
+- `PredictedSource` = GBFS fill-ratio heuristic until the trained model exists
+
 ## Definition of done
 
 ### v1 (private, production data)
